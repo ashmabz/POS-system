@@ -1,0 +1,197 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id            String   @id @default(uuid())
+  name          String
+  sku           String
+  barcode       String?
+  sellingPrice  Float
+  costPrice     Float
+  taxRate       Float    @default(15) // ZIMRA: VAT Rate %
+  stockQuantity Int
+  lowStockLevel Int      @default(5)
+  category      String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  shopId        String
+  shop          Shop     @relation(fields: [shopId], references: [id])
+  
+  saleItems     SaleItem[]
+  inventoryLogs InventoryLog[]
+
+  @@unique([shopId, sku])
+}
+
+model Sale {
+  id            String     @id @default(uuid())
+  receiptNumber String     // ZIMRA: Sequential ID (e.g. SHOP1-00001)
+  totalAmount   Float      // Gross
+  netAmount     Float      // ZIMRA: Net (Total - Tax)
+  taxAmount     Float      // ZIMRA: VAT Amount
+  subTotal      Float      // Legacy field, keeping for now
+  discount      Float      @default(0)
+  paymentMethod String     
+  status        String     @default("COMPLETED") 
+  
+  fiscalSignature String?  
+  hash            String?    // ZIMRA: Hash of this record
+  previousHash    String?    // ZIMRA: Hash of previous sale record
+  
+  createdAt     DateTime   @default(now())
+  
+  shopId        String
+  shop          Shop       @relation(fields: [shopId], references: [id])
+
+  userId        String
+  user          User       @relation("SalesPerformed", fields: [userId], references: [id])
+  
+  voidedById    String?
+  voidedBy      User?      @relation("SalesVoided", fields: [voidedById], references: [id])
+  voidReason    String?
+
+  items         SaleItem[]
+  refunds       Refund[]
+}
+
+model Refund {
+  id               String   @id @default(uuid())
+  originalSaleId   String
+  sale             Sale     @relation(fields: [originalSaleId], references: [id])
+  originalReceipt  String
+  
+  totalRefunded    Float    // Gross
+  taxRefunded      Float    // VAT
+  netRefunded      Float    // Net
+  
+  reason           String
+  createdAt        DateTime @default(now())
+  
+  shopId           String
+  shop             Shop     @relation(fields: [shopId], references: [id])
+  
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+
+  items            RefundItem[]
+}
+
+model RefundItem {
+  id        String @id @default(uuid())
+  refundId  String
+  refund    Refund @relation(fields: [refundId], references: [id])
+  
+  productId String
+  name      String
+  quantity  Int
+  price     Float  // Unit Price
+  taxRate   Float
+}
+
+model SaleItem {
+  id        String  @id @default(uuid())
+  quantity  Int
+  price     Float   // Unit Gross Price
+  taxRate   Float   // ZIMRA: Tax rate at time of sale
+  taxAmount Float   // ZIMRA: Tax portion
+  netAmount Float   // ZIMRA: Net portion
+  costPrice Float   
+  name      String
+  
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id])
+  
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model InventoryLog {
+  id        String   @id @default(uuid())
+  type      String   // "SALE" | "RESTOCK" | "ADJUSTMENT" | "DELETE"
+  quantity  Int
+  note      String?
+  createdAt DateTime @default(now())
+  
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id])
+
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String   // e.g. "PRICE_CHANGE", "LOGIN", "VOID_SALE"
+  details   String?  // JSON or text description
+  entityId  String?  // ID of the object changed
+  createdAt DateTime @default(now())
+
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+
+  shopId    String?
+  shop      Shop?    @relation(fields: [shopId], references: [id])
+}
+
+model DayClosure {
+  id           String   @id @default(uuid())
+  date         DateTime // The "business day"
+  openingFloat Float    @default(0)
+  totalCash    Float    @default(0)
+  totalCard    Float    @default(0)
+  totalMobile  Float    @default(0)
+  totalSales   Float    @default(0) // Gross
+  totalTax     Float    @default(0)
+  
+  createdAt    DateTime @default(now())
+
+  shopId       String
+  shop         Shop     @relation(fields: [shopId], references: [id])
+
+  closedById   String
+  closedBy     User     @relation(fields: [closedById], references: [id])
+}
+
+model Shop {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  createdAt DateTime @default(now())
+  
+  staff     User[]   @relation("ShopStaff")     
+  managers  User[]   @relation("ShopManagers")  
+  products  Product[]
+  sales     Sale[]
+  refunds   Refund[]
+  logs      InventoryLog[]
+  auditLogs AuditLog[]
+  closures  DayClosure[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  role      String   
+  name      String
+  createdAt DateTime @default(now())
+  
+  shopId    String?
+  shop      Shop?    @relation("ShopStaff", fields: [shopId], references: [id])
+  
+  managedShops Shop[] @relation("ShopManagers")
+
+  sales       Sale[]   @relation("SalesPerformed")
+  voidedSales Sale[] @relation("SalesVoided")
+  refunds     Refund[]
+  auditLogs   AuditLog[]
+  closures    DayClosure[]
+}
